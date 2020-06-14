@@ -4,88 +4,123 @@ using System.Net;
 using System.Text;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Collections.Generic;
 
 namespace WebCrawle
 {
     class Program
     {
-        private const string FilePath = @"./WebCrawler";
+        private const string FilePath = @"./Log/";
 
         private static Stopwatch sw;
-
+        private static char[] cbuffer;
+        private static bool downLoad;
+        private static List<string> loaded;
 
         static void Main(string[] args)
         {
+            if (!System.IO.Directory.Exists(FilePath))
+            {
+                System.IO.Directory.CreateDirectory(FilePath);
+            }
             sw = new Stopwatch();
+            cbuffer = new char[512];
+            downLoad = false;
+            loaded = new List<string>();
+
             sw.Restart();
-            WebCrawler();
+            WebCrawler("http://news.sina.com.cn/");
             sw.Stop();
             Console.WriteLine(string.Format("消耗时间:{0}ms.", sw.ElapsedMilliseconds));
             Console.Read();
         }
 
 
-        private static void WebCrawler()
+        private static void WebCrawler(string uriString)
         {
-            var httpURL = new Uri("https://www.python.org/");
+            if (loaded.Contains(uriString))
+            {
+                return;
+            }
 
-            //HttpWebRequest类继承于WebRequest，并没有自己的构造函数，需通过WebRequest的Creat方法 建立，并进行强制的类型转换 
-            HttpWebRequest httpReq = (HttpWebRequest)WebRequest.Create(httpURL);
+            loaded.Add(uriString);
+            Console.WriteLine("Now loading " + uriString);
 
-            //通过HttpWebRequest的GetResponse()方法建立HttpWebResponse,强制类型转换
-            HttpWebResponse httpResp = (HttpWebResponse)httpReq.GetResponse();
-
-            //GetResponseStream()方法获取HTTP响应的数据流,并尝试取得URL中所指定的网页内容
-            //若成功取得网页的内容，则以System.IO.Stream形式返回，若失败则产生ProtoclViolationException错误。在此正确的做法应将以下的代码放到一个try块中处理。这里简单处理 
-
-            Stream respStream = null;
             try
             {
-                respStream = httpResp.GetResponseStream();
-            }
-            catch (System.Net.ProtocolViolationException)
-            {
-                Console.WriteLine("没有响应流");
-            }
-            catch (System.ObjectDisposedException)
-            {
-                Console.WriteLine("当前实例已被释放");
-            }
+                //HttpWebRequest类继承于WebRequest，并没有自己的构造函数，需通过WebRequest的Creat方法 建立，并进行强制的类型转换 
+                HttpWebRequest httpReq = (HttpWebRequest)WebRequest.Create(uriString);
 
-            if (respStream != null)
-            {
-                //返回的内容是Stream形式的，所以可以利用StreamReader类获取GetResponseStream的内容，
-                //并以StreamReader类的Read方法依次读取网页源程序代码每一行的内容，直至行尾（读取的编码格式：UTF8） 
+                //通过HttpWebRequest的GetResponse()方法建立HttpWebResponse,强制类型转换
+                HttpWebResponse httpResp = (HttpWebResponse)httpReq.GetResponse();
 
-                var enc = Encoding.UTF8;
-                CheckEncoding(respStream, ref enc);
-
-                using (var respStreamReader = new StreamReader(respStream, enc))
+                /*
+                 * GetResponseStream()方法获取HTTP响应的数据流,并尝试取得URL中所指定的网页内容
+                 * 若成功取得网页的内容，则以System.IO.Stream形式返回，若失败则产生ProtoclViolationException错误。
+                 * 在此正确的做法应将以下的代码放到一个try块中处理。这里简单处理 
+                 */
+                using (var respStream = httpResp.GetResponseStream())
                 {
-                    string strBuff = "";
-                    char[] cbuffer = new char[256];
-                    int byteRead = 0;
-                    byteRead = respStreamReader.Read(cbuffer, 0, cbuffer.Length);
-
-                    while (byteRead != 0)
+                    if (respStream != null)
                     {
-                        string strResp = new string(cbuffer, 0, byteRead);
-                        strBuff = strBuff + strResp;
-                        byteRead = respStreamReader.Read(cbuffer, 0, cbuffer.Length);
-                    }
-                    respStream.Close();
-                    Console.WriteLine(strBuff);
+                        //返回的内容是Stream形式的，所以可以利用StreamReader类获取GetResponseStream的内容，
+                        //并以StreamReader类的Read方法依次读取网页源程序代码每一行的内容，直至行尾（读取的编码格式：UTF8）
+                        var enc = Encoding.UTF8;
+                        CheckEncoding(respStream, ref enc);
 
-                    using (var fs = new FileStream(string.Format("{0}_{1}.txt", FilePath, DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff")), FileMode.Create, FileAccess.Write))
-                    {
-                        fs.SetLength(0);
-                        byte[] byData = System.Text.Encoding.Default.GetBytes(strBuff);
-                        fs.Write(byData, 0, byData.Length);
+                        using (var respStreamReader = new StreamReader(respStream, enc))
+                        {
+                            string strBuff = "";
+                            var byteRead = respStreamReader.Read(cbuffer, 0, cbuffer.Length);
+
+                            while (byteRead != 0)
+                            {
+                                string strResp = new string(cbuffer, 0, byteRead);
+                                strBuff = strBuff + strResp;
+                                byteRead = respStreamReader.Read(cbuffer, 0, cbuffer.Length);
+                            }
+
+                            using (var fs = new FileStream(string.Format("{0}WebCrawler_{1}.txt", FilePath, DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss-fff")), FileMode.Create, FileAccess.Write))
+                            {
+                                fs.SetLength(0);
+                                byte[] byData = System.Text.Encoding.Default.GetBytes(strBuff);
+                                fs.Write(byData, 0, byData.Length);
+                            }
+
+                            Console.WriteLine("Download OK!\n");
+
+                            if (!downLoad)
+                            {
+                                downLoad = true;
+                                string[] uriStrings = GetLinks(strBuff);
+                                foreach (string uri in uriStrings)
+                                {
+                                    WebCrawler(uri);
+                                }
+                            }
+                        }
                     }
                 }
             }
+            catch (Exception err)
+            {
+                Console.WriteLine(err.Message);
+            }
         }
 
+        private static string[] GetLinks(string html)
+        {
+            const string pattern = @"http://([\w-]+\.)+[\w-]+(/[\w- ./?%&=]*)?";
+            Regex r = new Regex(pattern, RegexOptions.IgnoreCase); //新建正则模式
+            MatchCollection m = r.Matches(html); //获得匹配结果
+            string[] links = new string[m.Count];
+
+            for (int i = 0; i < m.Count; i++)
+            {
+                links[i] = m[i].ToString(); //提取出结果
+            }
+            return links;
+        }
 
         #region  c# 网络爬虫乱码问题解决方法[http://www.cnphp.info/howto-solve-encoding-problem-in-csharp.html]
 
